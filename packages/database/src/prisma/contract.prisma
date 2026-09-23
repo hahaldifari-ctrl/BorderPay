@@ -1,0 +1,330 @@
+// use prisma-8
+
+enum UserRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum CustomerStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentLinkStatus {
+  ACTIVE
+  EXPIRED
+  DISABLED
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CARD
+  BANK_TRANSFER
+  MOBILE_MONEY
+  WALLET
+  OTHER
+}
+
+enum LedgerEntryType {
+  PAYMENT
+  REFUND
+  FEE
+  ADJUSTMENT
+}
+
+enum ReconciliationStatus {
+  PENDING
+  MATCHED
+  NEEDS_REVIEW
+  REJECTED
+}
+
+enum ReconciliationMatchType {
+  EXACT
+  PARTIAL
+  AMBIGUOUS
+  MANUAL
+}
+
+enum ProviderEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum AuditAction {
+  CREATED
+  UPDATED
+  DELETED
+  MATCHED
+  UNMATCHED
+  STATUS_CHANGED
+  PAYMENT_RECEIVED
+  PAYMENT_FAILED
+  MANUAL_REVIEW
+}
+
+model User {
+  id          String       @id @default(uuid())
+  email       String       @unique
+  name        String
+  passwordHash String
+  role        UserRole     @default(MEMBER)
+
+  businesses  BusinessUser[]
+  auditEvents AuditEvent[]
+
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+}
+
+model Business {
+  id             String          @id @default(uuid())
+  name           String
+  email          String?
+  country        String          @default("NG")
+  defaultCurrency String         @default("NGN")
+
+  users          BusinessUser[]
+  customers      Customer[]
+  invoices       Invoice[]
+  paymentLinks   PaymentLink[]
+  payments       Payment[]
+  ledgerEntries  LedgerEntry[]
+  reconciliations Reconciliation[]
+  providerEvents ProviderEvent[]
+  auditEvents    AuditEvent[]
+
+  createdAt      TimestamptzString @default(now())
+  updatedAt      temporal.updatedAtString()
+}
+
+model BusinessUser {
+  business   Business @relation(fields: [businessId], references: [id])
+  businessId String
+
+  user       User     @relation(fields: [userId], references: [id])
+  userId     String
+
+  role       UserRole @default(MEMBER)
+
+  createdAt  TimestamptzString @default(now())
+
+  @@id([businessId, userId])
+}
+
+model Customer {
+  id          String         @id @default(uuid())
+  businessId  String
+  business    Business       @relation(fields: [businessId], references: [id])
+
+  name        String
+  email       String?
+  phone       String?
+  companyName String?
+  country     String?
+  status      CustomerStatus @default(ACTIVE)
+
+  invoices    Invoice[]
+  payments    Payment[]
+
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  @@index([businessId])
+  @@index([businessId, email])
+}
+
+model Invoice {
+  id              String        @id @default(uuid())
+  businessId      String
+  business        Business      @relation(fields: [businessId], references: [id])
+
+  customerId      String
+  customer        Customer      @relation(fields: [customerId], references: [id])
+
+  invoiceNumber   String
+  description     String?
+  currency        String
+  totalAmount     Decimal
+  amountPaid Decimal @default("0")
+  status          InvoiceStatus @default(DRAFT)
+
+  dueDate         TimestamptzString?
+  issuedAt        TimestamptzString @default(now())
+
+  paymentLinks    PaymentLink[]
+  payments        Payment[]
+  reconciliations Reconciliation[]
+
+  createdAt       TimestamptzString @default(now())
+  updatedAt       temporal.updatedAtString()
+
+  @@unique([businessId, invoiceNumber])
+  @@index([businessId, status])
+  @@index([customerId])
+}
+
+model PaymentLink {
+  id          String            @id @default(uuid())
+  businessId  String
+  business    Business          @relation(fields: [businessId], references: [id])
+
+  invoiceId   String
+  invoice     Invoice           @relation(fields: [invoiceId], references: [id])
+
+  token       String            @unique
+  status      PaymentLinkStatus @default(ACTIVE)
+  expiresAt   TimestamptzString?
+
+  payments    Payment[]
+
+  createdAt   TimestamptzString @default(now())
+  updatedAt   temporal.updatedAtString()
+
+  @@index([businessId])
+  @@index([invoiceId])
+}
+
+model Payment {
+  id                 String         @id @default(uuid())
+  businessId         String
+  business           Business       @relation(fields: [businessId], references: [id])
+
+  customerId         String?
+  customer            Customer?     @relation(fields: [customerId], references: [id])
+
+  invoiceId          String?
+  invoice            Invoice?       @relation(fields: [invoiceId], references: [id])
+
+  paymentLinkId      String?
+  paymentLink        PaymentLink?  @relation(fields: [paymentLinkId], references: [id])
+
+  providerPaymentId  String?
+  providerReference  String?
+  internalReference  String          @unique
+
+  amount             Decimal
+  currency           String
+  status             PaymentStatus   @default(PENDING)
+  method             PaymentMethod?
+
+  paidAt             TimestamptzString?
+  metadata           Json?
+
+  ledgerEntries      LedgerEntry[]
+  reconciliations    Reconciliation[]
+
+  createdAt           TimestamptzString @default(now())
+  updatedAt           temporal.updatedAtString()
+
+  @@index([businessId, status])
+  @@index([providerPaymentId])
+  @@index([providerReference])
+  @@index([invoiceId])
+  @@index([customerId])
+}
+
+model LedgerEntry {
+  id          String          @id @default(uuid())
+  businessId  String
+  business    Business        @relation(fields: [businessId], references: [id])
+
+  paymentId   String?
+  payment     Payment?        @relation(fields: [paymentId], references: [id])
+
+  type        LedgerEntryType
+  amount      Decimal
+  currency    String
+  description String?
+
+  createdAt   TimestamptzString @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([paymentId])
+}
+
+model Reconciliation {
+  id             String                   @id @default(uuid())
+  businessId     String
+  business       Business                 @relation(fields: [businessId], references: [id])
+
+  paymentId      String
+  payment       Payment                  @relation(fields: [paymentId], references: [id])
+
+  invoiceId      String?
+  invoice        Invoice?                @relation(fields: [invoiceId], references: [id])
+
+  status         ReconciliationStatus     @default(PENDING)
+  matchType      ReconciliationMatchType?
+  confidence     Decimal?
+  reason         String?
+  matchedSignals Json?
+
+  reviewedAt     TimestamptzString?
+  reviewedBy     String?
+
+  createdAt      TimestamptzString @default(now())
+  updatedAt      temporal.updatedAtString()
+
+  @@index([businessId, status])
+  @@index([paymentId])
+  @@index([invoiceId])
+}
+
+model ProviderEvent {
+  id              String              @id @default(uuid())
+  businessId      String
+  business        Business            @relation(fields: [businessId], references: [id])
+
+  provider        String
+  eventId         String
+  eventType       String
+  status          ProviderEventStatus @default(RECEIVED)
+
+  payload         Json
+  processedAt     TimestamptzString?
+  errorMessage    String?
+
+  createdAt       TimestamptzString @default(now())
+
+  @@unique([provider, eventId])
+  @@index([businessId, createdAt])
+}
+
+model AuditEvent {
+  id          String      @id @default(uuid())
+  businessId  String
+  business    Business    @relation(fields: [businessId], references: [id])
+
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+
+  action      AuditAction
+  entityType  String
+  entityId    String
+  description String?
+  metadata    Json?
+
+  createdAt   TimestamptzString @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([entityType, entityId])
+}
